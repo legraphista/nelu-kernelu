@@ -1,4 +1,5 @@
 const { SessionBasicResponse, SessionBasicResponseTypes } = require('./base');
+const util = require('util');
 
 class SessionExecuteCodeResponse extends SessionBasicResponse {
     constructor(id, execCount, mimeType, wasItAborted, result) {
@@ -21,6 +22,17 @@ class SessionExecuteCodeResponse extends SessionBasicResponse {
                     ename: `${result}`.split(':')[0],
                     evalue: result.message,
                     stack: result.stack
+                };
+            } else if (result instanceof Object) {
+                this._result = {
+                    type: 'ok',
+                    result: util.inspect(result, {
+                        depth: 10,
+                        maxArrayLength: 100,
+                        breakLength: 120,
+                        showHidden: true,
+                        showProxy: true
+                    })
                 };
             } else {
                 this._result = {
