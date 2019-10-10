@@ -159,7 +159,6 @@ class MessageLoop {
 
                 return code;
               }catch (e) {
-                console.log(require('util').inspect(e, {depth: 10, showHidden: true}));
 
                 if (e.loc) {
                   let { line, column } = e.loc;
