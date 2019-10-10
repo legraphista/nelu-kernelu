@@ -23,7 +23,7 @@ class SessionExecuteCodeResponse extends SessionBasicResponse {
                     evalue: result.message,
                     stack: result.stack
                 };
-            } else if (result instanceof Object) {
+            } else if (typeof result === "object") {
                 this._result = {
                     type: 'ok',
                     result: util.inspect(result, {
