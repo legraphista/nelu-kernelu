@@ -25,14 +25,14 @@
         "url": "https://github.com/3Nigma/nelu-kernelu.git"
     },
     "dependencies": {
+        "acorn": "^7.1.0",
         "pkginfo": "^0.4.1",
         "uuid": "3",
         "winston": "^3.2.1",
         "yargs": "^13.3.0",
         "zeromq": "^5.1.0"
     },
-    "devDependencies": {
-    },
+    "devDependencies": {},
     "scripts": {
         "postinstall": "node ./scripts/install"
     }

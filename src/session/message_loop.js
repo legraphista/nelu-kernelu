@@ -1,6 +1,7 @@
 const vm = require('vm');
 const fs = require('fs');
 const { MessageChannel, receiveMessageOnPort } = require('worker_threads');
+const acorn = require('acorn');
 
 const { SessionExecuteCodeRequest } = require('./postables/requests/execute_code');
 const { KernelOutOfExecuteMessageCommEvent } = require('../kernel/events/comm_msg');
@@ -138,11 +139,31 @@ class MessageLoop {
 
         this._executeCodeSourcePort.onmessage = null;
         try {
-            let rawEvalResult = vm.runInContext(`{
+
+            const _handleCodeAsyncRewrite = (code) => {
+                code = `(async function() { ${code} })()`;
+                const program = acorn.parse(code);
+                const programBodyStatement = program.body[0];
+                const expression = programBodyStatement.expression;
+                const callee = expression.callee;
+                const calleeBlockBody = callee.body;
+                const statements = calleeBlockBody.body;
+                const lastStatement = statements[statements.length - 1];
+                if(lastStatement.type === 'ExpressionStatement' || lastStatement.type === 'FunctionDeclaration') {
+                    const before = code.substr(0, lastStatement.start);
+                    const after = code.substring(lastStatement.start);
+                    code = `${before};return ${after}`
+                }
+                return code;
+            };
+
+            let code = _handleCodeAsyncRewrite(args.code);
+
+            let rawEvalResult = vm.runInContext(`
                     var kernel = new SessionKernelBrdge(${id}, "${this._versionName}", ${this._buildNumber}, 
                         "${this._username}", _kHostPort, _commManager);
-                    ${args.code}
-                }`, this._context, {
+                    ${code}
+                `, this._context, {
                     breakOnSigint: true
                 });
             const tryHtmlResolutionFor = (result) => {
