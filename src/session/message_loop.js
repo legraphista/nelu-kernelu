@@ -38,7 +38,7 @@ class MessageLoop {
         // TODO: obfuscate _kHostPort/_commManager from the context (random variable name?)
         this._context = vm.createContext({
             // Built in elements
-            console,
+            console: { ...console },
             __dirname, __filename,
             setImmediate: (f, ...args) => new PromisifiedImediate(f, ...args), 
             setInterval: (f, time, ...args) => new PromisifiedInterval(f, time, ...args), 
@@ -141,43 +141,43 @@ class MessageLoop {
         try {
 
             const _handleCodeAsyncRewrite = (code) => {
-              try {
-                code = `(async function() { \n${code}\n })()`;
-                const program = acorn.parse(code);
-                const programBodyStatement = program.body[0];
-                const expression = programBodyStatement.expression;
-                const callee = expression.callee;
-                const calleeBlockBody = callee.body;
-                const statements = calleeBlockBody.body;
-                const lastStatement = statements[statements.length - 1];
+                try {
+                    code = `(async function() { \n${code}\n })()`;
+                    const program = acorn.parse(code);
+                    const programBodyStatement = program.body[0];
+                    const expression = programBodyStatement.expression;
+                    const callee = expression.callee;
+                    const calleeBlockBody = callee.body;
+                    const statements = calleeBlockBody.body;
+                    const lastStatement = statements[statements.length - 1];
 
-                if (lastStatement.type === 'ExpressionStatement' || lastStatement.type === 'FunctionDeclaration') {
-                  const before = code.substr(0, lastStatement.start);
-                  const after = code.substring(lastStatement.start);
-                  code = `${before};return ${after}`
+                    if (lastStatement.type === 'ExpressionStatement' || lastStatement.type === 'FunctionDeclaration') {
+                        const before = code.substr(0, lastStatement.start);
+                        const after = code.substring(lastStatement.start);
+                        code = `${before};return ${after}`
+                    }
+
+                    return code;
+                } catch (e) {
+
+                    if (e.loc) {
+                        let { line, column } = e.loc;
+
+                        const codeLines = code.split('\n');
+                        codeLines.splice(0, 1);
+                        codeLines.splice(codeLines.length - 1, 1);
+                        line -= 1;
+
+                        const linesBefore = codeLines.slice(Math.max(0, line - 3), line);
+                        const linesAfter = codeLines.slice(Math.min(codeLines.length, line), Math.min(codeLines.length, line + 3));
+                        const spacer = ' '.repeat(column - 1);
+                        const carret = `${spacer}^`;
+                        const message = `${spacer.substr(0, spacer.length - e.message.length / 2)}${e.message}`;
+                        throw `${linesBefore.join('\n')}\n${carret}\n${message}\n\n${linesAfter.join('\n')}`
+                    }
+
+                    throw e;
                 }
-
-                return code;
-              }catch (e) {
-
-                if (e.loc) {
-                  let { line, column } = e.loc;
-
-                  const codeLines = code.split('\n');
-                  codeLines.splice(0, 1);
-                  codeLines.splice(codeLines.length - 1, 1);
-                  line -= 1;
-
-                  const linesBefore = codeLines.slice(Math.max(0, line - 3), line);
-                  const linesAfter = codeLines.slice(Math.min(codeLines.length, line + 1), Math.min(codeLines.length, line + 1 + 3));
-                  const spacer = ' '.repeat(column-1);
-                  const carret = `${spacer}^`;
-                  const message = `${spacer.substr(0, spacer.length - e.message.length/2)}${e.message}`;
-                  throw `${linesBefore.join('\n')}\n${carret}\n${message}\n${linesAfter.join('\n')}`
-                }
-
-                throw e;
-              }
             };
 
             let code = _handleCodeAsyncRewrite(args.code);
