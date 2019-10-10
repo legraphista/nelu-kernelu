@@ -186,6 +186,9 @@ class MessageLoop {
             let rawEvalResult = vm.runInContext(`
                     var kernel = new SessionKernelBrdge(${id}, "${this._versionName}", ${this._buildNumber}, 
                         "${this._username}", _kHostPort, _commManager);
+                    console.log = (...args) => kernel.print(...args, '\\n');
+                    console.error = (...args) => console.log('E:', ...args);
+                    console.warn = (...args) => console.log('W:', ...args);
                     ${code}
                 `, this._context, {
                     breakOnSigint: true
