@@ -12,6 +12,7 @@ const { SessionKernelComm } = require('./models/kernel_comm');
 const { SessionKernelBrdge } = require('./models/kernel_bridge');
 const { JupyterDisplayableMessage } = require('./models/displayable_message');
 const { SessionCommManager } = require('./models/comm_manager');
+const { BabelCodeMorpher } = require('./babel_morpher');
 
 const { SessionClearableTimer, 
         PromisifiedImediate,
@@ -34,6 +35,7 @@ class MessageLoop {
         this._buildNumber = nkBuildNumber;
         this._username = "unknown";
         this._commManager = new SessionCommManager();
+        this._codeMorpher = new BabelCodeMorpher();
 
         // TODO: obfuscate _kHostPort/_commManager from the context (random variable name?)
         this._context = vm.createContext({
@@ -132,57 +134,72 @@ class MessageLoop {
      * 
      * @param {} - task id and code to excute 
      */
-    _handleExecuteCodeRequest(msgEvent) {
+    async _handleExecuteCodeRequest(msgEvent) {
         const {id, args} = msgEvent.data;
         let resultMimeType = 'text/plain';
         let promisedEvalResult;
 
+        const _handleCodeAsyncRewrite = (code) => {
+          try {
+            code = `(async function() { \n${code}\n })()`;
+            const program = acorn.parse(code);
+            const programBodyStatement = program.body[0];
+            const expression = programBodyStatement.expression;
+            const callee = expression.callee;
+            const calleeBlockBody = callee.body;
+            const statements = calleeBlockBody.body;
+            const lastStatement = statements[statements.length - 1];
+
+            if (lastStatement.type === 'ExpressionStatement' || lastStatement.type === 'FunctionDeclaration') {
+              const before = code.substr(0, lastStatement.start);
+              const after = code.substring(lastStatement.start);
+              code = `${before};return ${after}`
+            }
+
+            return code;
+          } catch (e) {
+
+            if (e.loc) {
+              let { line, column } = e.loc;
+
+              const codeLines = code.split('\n');
+              codeLines.splice(0, 1);
+              codeLines.splice(codeLines.length - 1, 1);
+              line -= 1;
+
+              const linesBefore = codeLines.slice(Math.max(0, line - 3), line);
+              const linesAfter = codeLines.slice(Math.min(codeLines.length, line), Math.min(codeLines.length, line + 3));
+              const spacer = ' '.repeat(column - 1);
+              const carret = `${spacer}^`;
+              const message = `${spacer.substr(0, spacer.length - e.message.length / 2)}${e.message}`;
+              throw `${linesBefore.join('\n')}\n${carret}\n${message}\n\n${linesAfter.join('\n')}`
+            }
+
+            throw e;
+          }
+        };
+
         this._executeCodeSourcePort.onmessage = null;
         try {
+            let codeToRun;
+            let rawEvalResult;
+            const tryHtmlResolutionFor = (result) => {
+                let { isHtml, promisedVal } = this._tryResolvingHtmlFrom(result);
 
-            const _handleCodeAsyncRewrite = (code) => {
-                try {
-                    code = `(async function() { \n${code}\n })()`;
-                    const program = acorn.parse(code);
-                    const programBodyStatement = program.body[0];
-                    const expression = programBodyStatement.expression;
-                    const callee = expression.callee;
-                    const calleeBlockBody = callee.body;
-                    const statements = calleeBlockBody.body;
-                    const lastStatement = statements[statements.length - 1];
-
-                    if (lastStatement.type === 'ExpressionStatement' || lastStatement.type === 'FunctionDeclaration') {
-                        const before = code.substr(0, lastStatement.start);
-                        const after = code.substring(lastStatement.start);
-                        code = `${before};return ${after}`
-                    }
-
-                    return code;
-                } catch (e) {
-
-                    if (e.loc) {
-                        let { line, column } = e.loc;
-
-                        const codeLines = code.split('\n');
-                        codeLines.splice(0, 1);
-                        codeLines.splice(codeLines.length - 1, 1);
-                        line -= 1;
-
-                        const linesBefore = codeLines.slice(Math.max(0, line - 3), line);
-                        const linesAfter = codeLines.slice(Math.min(codeLines.length, line), Math.min(codeLines.length, line + 3));
-                        const spacer = ' '.repeat(column - 1);
-                        const carret = `${spacer}^`;
-                        const message = `${spacer.substr(0, spacer.length - e.message.length / 2)}${e.message}`;
-                        throw `${linesBefore.join('\n')}\n${carret}\n${message}\n\n${linesAfter.join('\n')}`
-                    }
-
-                    throw e;
+                if (isHtml) {
+                    resultMimeType = 'text/html';
                 }
+                return promisedVal;
             };
 
-            let code = _handleCodeAsyncRewrite(args.code);
+            try {
+                codeToRun = await this._codeMorpher.morph(args.code);
+            } catch {
+                codeToRun = args.code;
+            }
+            codeToRun = _handleCodeAsyncRewrite(codeToRun);
 
-            let rawEvalResult = vm.runInContext(`
+            vm.runInContext(`
                     var kernel = new SessionKernelBrdge(${id}, "${this._versionName}", ${this._buildNumber}, 
                         "${this._username}", _kHostPort, _commManager);
                     console.log = (...args) => kernel.print(...args, '\\n');
@@ -192,14 +209,6 @@ class MessageLoop {
                 `, this._context, {
                     breakOnSigint: true
                 });
-            const tryHtmlResolutionFor = (result) => {
-                let { isHtml, promisedVal } = this._tryResolvingHtmlFrom(result);
-
-                if (isHtml) {
-                    resultMimeType = 'text/html';
-                }
-                return promisedVal;
-            };
 
             if (rawEvalResult instanceof Promise) {
                 promisedEvalResult = rawEvalResult.then(resolvedResult => tryHtmlResolutionFor(resolvedResult));
